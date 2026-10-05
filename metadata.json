@@ -1,0 +1,6 @@
+{
+  "name": "Yathartha Khabar",
+  "description": "Fast, trustworthy, modern Nepal-focused digital news platform with AI-assisted aggregation, multi-source story merging, and real-time updates.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
