@@ -56,9 +56,9 @@ export const Footer: React.FC<FooterProps> = ({
               News Desks
             </h4>
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-medium">
-              {CATEGORIES.map((cat) => (
+              {CATEGORIES.map((cat, idx) => (
                 <button
-                  key={cat}
+                  key={`${cat}-${idx}`}
                   onClick={() => {
                     onSelectCategory(cat);
                     window.scrollTo({ top: 0, behavior: 'smooth' });

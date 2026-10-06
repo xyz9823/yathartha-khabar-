@@ -44,6 +44,23 @@ export interface FactCheckItem {
   dateChecked: string;
 }
 
+export interface FactCheckedEntity {
+  name: string;
+  type: 'person' | 'organization' | 'location' | 'event';
+  roleOrSignificance: string;
+  verifiedDetails: string;
+  verificationSource?: string;
+}
+
+export interface ContextExpansion {
+  background: string;
+  latestDevelopments: string[];
+  whatHappensNext: string;
+  keyEntities: FactCheckedEntity[];
+  expandedAt?: string;
+  confidenceScore?: number;
+}
+
 export interface VisualExplainer {
   whatHappened: string;
   whyItMatters: string;
@@ -70,12 +87,15 @@ export interface Article {
   image_url: string;
   image_source: string;
   image_photographer?: string;
+  image_credit?: string;
   image_license: string;
   image_attribution: string;
+  original_image_url?: string;
   image_caption?: string;
   image_alt_text?: string;
   image_subject?: string;
   is_editorial_placeholder?: boolean;
+  context_expansion?: ContextExpansion;
   is_breaking: boolean;
   is_developing: boolean;
   is_fact_check?: boolean;
@@ -95,6 +115,8 @@ export interface Article {
   is_demo?: boolean;
   corrections?: { date: string; note: string }[];
   audio_url?: string;
+  video_url?: string;
+  comments?: Array<{ id: string; user: string; text: string; date: string; likes: number }>;
 }
 
 export interface NewsFeed {

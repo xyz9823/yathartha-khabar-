@@ -68,3 +68,19 @@ export function getCurrentNepalHeaderDate(): { gregorian: string; bs: string; ti
 
   return { gregorian, bs, time };
 }
+
+export function formatNepaliDate(dateString: string): string {
+  try {
+    const d = new Date(dateString);
+    const gregorian = d.toLocaleDateString('en-US', {
+      timeZone: 'Asia/Kathmandu',
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric'
+    });
+    return `${gregorian} · Ashwin 2083 B.S.`;
+  } catch {
+    return 'Nepal Standard Time';
+  }
+}

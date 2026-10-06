@@ -2,6 +2,8 @@ import { Article, CollectorEngineStatus, SourceMonitorStats, StorySource, StoryT
 import { GoogleGenAI } from '@google/genai';
 import crypto from 'crypto';
 import { selectRealEditorialImage, generateEditorialPlaceholderSvg } from './editorialImageRegistry.ts';
+import { resolveArticleImage } from './imageProviderService.ts';
+import { expandArticleContext } from './contextExpansionService.ts';
 
 export interface RawFeedItem {
   sourceId: string;
@@ -469,6 +471,13 @@ export class CollectorEngine {
 
       matchedStory.ai_summary_note = `Corroborated across ${matchedStory.sources.length} sources (${matchedStory.sources.map(s => s.name).join(', ')}).`;
 
+      // Update Context Expansion on merged corroborating reports
+      try {
+        matchedStory.context_expansion = await expandArticleContext(matchedStory, this.aiClient || undefined);
+      } catch (ctxErr) {
+        console.warn('[CollectorEngine] Context refresh note:', ctxErr);
+      }
+
       if (this.onStoryUpdated) {
         await this.onStoryUpdated(matchedStory);
       }
@@ -523,21 +532,25 @@ Return JSON with:
         if (parsed.category) detectedCategory = parsed.category;
         if (typeof parsed.isSensitive === 'boolean') isSensitive = parsed.isSensitive;
         if (typeof parsed.isBreaking === 'boolean') isBreaking = parsed.isBreaking;
-      } catch (err) {
-        console.warn('[CollectorEngine] Gemini summarization note:', err);
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')) {
+          console.info('[CollectorEngine] Gemini quota limit 429 active. Using verified local heuristics for summarization.');
+        } else {
+          console.warn('[CollectorEngine] Gemini summarization note:', msg.slice(0, 100));
+        }
       }
     }
 
-    // 4. Automated Real Editorial Image Selection (Section 7)
+    // 4. Automated Real Editorial Image Selection via Multi-Provider Architecture
     const activeImageUrls = new Set((existingArticles || []).map(a => a.image_url).filter(Boolean));
-    const selectedImage = selectRealEditorialImage({
+    const selectedImage = await resolveArticleImage({
       title: finalTitle,
       summary: finalSummary,
       category: detectedCategory,
-      tags: [detectedCategory, 'Nepal', item.sourceName],
       sourceName: item.sourceName,
       providedImageUrl: item.imageUrl
-    }, activeImageUrls);
+    }, activeImageUrls, this.aiClient || undefined);
 
     // 5. Automatic Publishing Decision (Section 8)
     let initialStatus: 'published' | 'needs_verification' = 'published';
@@ -549,6 +562,12 @@ Return JSON with:
       initialStatus = isSensitive ? 'needs_verification' : 'published';
     }
 
+    const uniqueTags = Array.from(new Set([
+      detectedCategory,
+      'Nepal',
+      item.sourceName
+    ].filter(Boolean)));
+
     const novelArticle: Article = {
       id: `yk-${Date.now().toString(36)}`,
       title: finalTitle,
@@ -556,7 +575,7 @@ Return JSON with:
       summary: finalSummary,
       content: `${finalSummary}\n\nKATHMANDU — Yathartha Khabar automated collector received verified reports through authorized digital feeds. Regulatory and field records are cross-checked before full dissemination.\n\nOriginal source link provided below.`,
       category: detectedCategory,
-      tags: [detectedCategory, 'Nepal', item.sourceName],
+      tags: uniqueTags,
       sources: [
         {
           id: `s-${Date.now()}`,
@@ -593,6 +612,13 @@ Return JSON with:
         }
       ]
     };
+
+    // 6. Extra AI Pipeline Step: Context Expansion
+    try {
+      novelArticle.context_expansion = await expandArticleContext(novelArticle, this.aiClient || undefined);
+    } catch (ctxErr) {
+      console.warn('[CollectorEngine] Context expansion note:', ctxErr);
+    }
 
     if (this.onStoryPublished) {
       await this.onStoryPublished(novelArticle);

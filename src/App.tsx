@@ -6,7 +6,7 @@ import { TopStories } from './components/TopStories';
 import { LatestNewsFeed } from './components/LatestNewsFeed';
 import { CategoryShowcase } from './components/CategoryShowcase';
 import { FastPipelineBanner } from './components/FastPipelineBanner';
-import { ArticleModal } from './components/ArticleModal';
+import { ArticleDetailView } from './components/ArticleDetailView';
 import { SearchModal } from './components/SearchModal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { AboutModal } from './components/AboutModal';
@@ -123,6 +123,23 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Sync URL hash for direct links and browser back/forward navigation
+  useEffect(() => {
+    const handleHash = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#article-')) {
+        const id = hash.replace('#article-', '');
+        const found = articles.find((a) => a.id === id || a.slug === id);
+        if (found) {
+          setSelectedArticle(found);
+        }
+      }
+    };
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [articles]);
 
   const fetchNews = async () => {
     try {
@@ -364,142 +381,175 @@ export default function App() {
         customLogoUrl={settings.logoUrl}
       />
 
-      {/* Breaking News Dedicated Alert Bar (Section 6 & 11) */}
-      <BreakingNewsBar
-        breakingArticles={breakingArticles}
-        onSelectArticle={(art) => setSelectedArticle(art)}
-      />
+      {/* Main Editorial Content or Full-Page Article Detail View */}
+      {selectedArticle ? (
+        <ArticleDetailView
+          article={selectedArticle}
+          onClose={() => {
+            setSelectedArticle(null);
+            if (window.location.hash.startsWith('#article-')) {
+              history.pushState(null, '', window.location.pathname + window.location.search);
+            }
+          }}
+          relatedArticles={relatedArticles}
+          onSelectArticle={(art) => {
+            setSelectedArticle(art);
+            window.location.hash = `#article-${art.id}`;
+          }}
+          onUpdateArticle={handleUpdateArticle}
+        />
+      ) : (
+        <>
+          {/* Breaking News Dedicated Alert Bar (Section 6 & 11) */}
+          <BreakingNewsBar
+            breakingArticles={breakingArticles}
+            onSelectArticle={(art) => {
+              setSelectedArticle(art);
+              window.location.hash = `#article-${art.id}`;
+            }}
+          />
 
-      {/* Main Editorial Content */}
-      <main className="flex-1">
-        {activeCategory === 'Latest' ? (
-          <>
-            {/* Top Stories Showcase */}
-            <TopStories
-              articles={displayedArticles}
-              onSelectArticle={(art) => setSelectedArticle(art)}
-            />
+          <main className="flex-1">
+            {activeCategory === 'Latest' ? (
+              <>
+                {/* Top Stories Showcase */}
+                <TopStories
+                  articles={displayedArticles}
+                  onSelectArticle={(art) => {
+                    setSelectedArticle(art);
+                    window.location.hash = `#article-${art.id}`;
+                  }}
+                />
 
-            {/* Fast News Pipeline Explainer Banner */}
-            <FastPipelineBanner
-              onOpenAdmin={() => setIsAdminOpen(true)}
-              onTriggerSimulate={handleTriggerCollector}
-              isSimulating={isSimulating}
-            />
+                {/* Fast News Pipeline Explainer Banner */}
+                <FastPipelineBanner
+                  onOpenAdmin={() => setIsAdminOpen(true)}
+                  onTriggerSimulate={handleTriggerCollector}
+                  isSimulating={isSimulating}
+                />
 
-            {/* Dynamic Latest News Feed (Section 9 & 17) */}
-            <LatestNewsFeed
-              articles={displayedArticles}
-              onSelectArticle={(art) => setSelectedArticle(art)}
-              onTriggerCollector={handleTriggerCollector}
-              onSimulateBreaking={handleSimulateBreaking}
-              isSimulating={isSimulating}
-              activeFilter="All"
-            />
+                {/* Dynamic Latest News Feed (Section 9 & 17) */}
+                <LatestNewsFeed
+                  articles={displayedArticles}
+                  onSelectArticle={(art) => {
+                    setSelectedArticle(art);
+                    window.location.hash = `#article-${art.id}`;
+                  }}
+                  onTriggerCollector={handleTriggerCollector}
+                  onSimulateBreaking={handleSimulateBreaking}
+                  isSimulating={isSimulating}
+                  activeFilter="All"
+                />
 
-            {/* Curated Category Showcases */}
-            <CategoryShowcase
-              title="Aviation & Infrastructure"
-              category="Aviation"
-              nepaliTitle="हवाई तथा पूर्वाधार"
-              articles={articles}
-              onSelectArticle={(art) => setSelectedArticle(art)}
-              onViewCategory={(cat) => setActiveCategory(cat)}
-            />
+                {/* Curated Category Showcases */}
+                <CategoryShowcase
+                  title="Aviation & Infrastructure"
+                  category="Aviation"
+                  nepaliTitle="हवाई तथा पूर्वाधार"
+                  articles={articles}
+                  onSelectArticle={(art) => {
+                    setSelectedArticle(art);
+                    window.location.hash = `#article-${art.id}`;
+                  }}
+                  onViewCategory={(cat) => setActiveCategory(cat)}
+                />
 
-            <CategoryShowcase
-              title="Economy & Finance"
-              category="Economy"
-              nepaliTitle="अर्थतन्त्र तथा बैंकिङ"
-              articles={articles}
-              onSelectArticle={(art) => setSelectedArticle(art)}
-              onViewCategory={(cat) => setActiveCategory(cat)}
-            />
+                <CategoryShowcase
+                  title="Economy & Finance"
+                  category="Economy"
+                  nepaliTitle="अर्थतन्त्र तथा बैंकिङ"
+                  articles={articles}
+                  onSelectArticle={(art) => {
+                    setSelectedArticle(art);
+                    window.location.hash = `#article-${art.id}`;
+                  }}
+                  onViewCategory={(cat) => setActiveCategory(cat)}
+                />
 
-            <CategoryShowcase
-              title="Himalayan Tourism & Expeditions"
-              category="Tourism"
-              nepaliTitle="पर्यटन तथा पदयात्रा"
-              articles={articles}
-              onSelectArticle={(art) => setSelectedArticle(art)}
-              onViewCategory={(cat) => setActiveCategory(cat)}
-            />
-          </>
-        ) : (
-          /* Filtered Category View */
-          <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8 space-y-6">
-            <div className="pb-4 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-red-700 uppercase tracking-wider">
-                  Category Archive
-                </span>
-                <h2 className="font-serif text-3xl font-black text-slate-950 mt-1">
-                  {activeCategory}
-                </h2>
-              </div>
-              <button
-                onClick={() => setActiveCategory('Latest')}
-                className="text-xs font-semibold text-slate-600 hover:text-black underline"
-              >
-                ← Back to All News
-              </button>
-            </div>
-
-            {displayedArticles.length === 0 ? (
-              <div className="py-16 text-center text-slate-500 space-y-2">
-                <p className="text-base font-semibold">No stories in {activeCategory} right now.</p>
-                <p className="text-xs text-slate-400">
-                  New reports from authorized feeds will be categorized here automatically.
-                </p>
-              </div>
+                <CategoryShowcase
+                  title="Himalayan Tourism & Expeditions"
+                  category="Tourism"
+                  nepaliTitle="पर्यटन तथा पदयात्रा"
+                  articles={articles}
+                  onSelectArticle={(art) => {
+                    setSelectedArticle(art);
+                    window.location.hash = `#article-${art.id}`;
+                  }}
+                  onViewCategory={(cat) => setActiveCategory(cat)}
+                />
+              </>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {displayedArticles.map((art) => (
-                  <article
-                    key={art.id}
-                    onClick={() => setSelectedArticle(art)}
-                    className="flex flex-col bg-white rounded-lg border border-slate-200 overflow-hidden group cursor-pointer hover:shadow-md transition-all"
+              /* Filtered Category View */
+              <div className="max-w-7xl mx-auto px-4 sm:px-8 py-8 space-y-6">
+                <div className="pb-4 border-b border-slate-200 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-red-700 uppercase tracking-wider">
+                      Category Archive
+                    </span>
+                    <h2 className="font-serif text-3xl font-black text-slate-950 mt-1">
+                      {activeCategory}
+                    </h2>
+                  </div>
+                  <button
+                    onClick={() => setActiveCategory('Latest')}
+                    className="text-xs font-semibold text-slate-600 hover:text-black underline"
                   >
-                    <div className="aspect-[16/9] w-full overflow-hidden bg-slate-100">
-                      <img
-                        src={art.image_url}
-                        alt={art.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                      />
-                    </div>
-                    <div className="p-4 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1.5">
-                          <span className="text-red-700 uppercase">{art.category}</span>
-                          <span>·</span>
-                          <span>Source: {art.primarySource}</span>
+                    ← Back to All News
+                  </button>
+                </div>
+
+                {displayedArticles.length === 0 ? (
+                  <div className="py-16 text-center text-slate-500 space-y-2">
+                    <p className="text-base font-semibold">No stories in {activeCategory} right now.</p>
+                    <p className="text-xs text-slate-400">
+                      New reports from authorized feeds will be categorized here automatically.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {displayedArticles.map((art) => (
+                      <article
+                        key={art.id}
+                        onClick={() => {
+                          setSelectedArticle(art);
+                          window.location.hash = `#article-${art.id}`;
+                        }}
+                        className="flex flex-col bg-white rounded-lg border border-slate-200 overflow-hidden group cursor-pointer hover:shadow-md transition-all"
+                      >
+                        <div className="aspect-[16/9] w-full overflow-hidden bg-slate-100">
+                          <img
+                            src={art.image_url}
+                            alt={art.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
                         </div>
-                        <h3 className="font-serif text-lg font-bold text-slate-900 group-hover:text-red-800 transition-colors leading-snug line-clamp-2 mb-2">
-                          {art.title}
-                        </h3>
-                        <p className="text-xs sm:text-sm text-slate-600 line-clamp-3">
-                          {art.summary}
-                        </p>
-                      </div>
-                      <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-400 mt-3">
-                        Published {new Date(art.published_at).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </article>
-                ))}
+                        <div className="p-4 flex-1 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-1.5">
+                              <span className="text-red-700 uppercase">{art.category}</span>
+                              <span>·</span>
+                              <span>Source: {art.primarySource}</span>
+                            </div>
+                            <h3 className="font-serif text-lg font-bold text-slate-900 group-hover:text-red-800 transition-colors leading-snug line-clamp-2 mb-2">
+                              {art.title}
+                            </h3>
+                            <p className="text-xs sm:text-sm text-slate-600 line-clamp-3">
+                              {art.summary}
+                            </p>
+                          </div>
+                          <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-400 mt-3">
+                            Published {new Date(art.published_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
-      </main>
-
-      {/* Article Detail View Modal */}
-      <ArticleModal
-        article={selectedArticle}
-        onClose={() => setSelectedArticle(null)}
-        relatedArticles={relatedArticles}
-        onSelectArticle={(art) => setSelectedArticle(art)}
-      />
+          </main>
+        </>
+      )}
 
       {/* Fast Search Modal */}
       <SearchModal

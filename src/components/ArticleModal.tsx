@@ -255,8 +255,8 @@ export const ArticleModal: React.FC<ArticleModalProps> = ({
           {article.tags && article.tags.length > 0 && (
             <div className="pt-2 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-slate-400 font-medium">Topic Tags:</span>
-              {article.tags.map((tag) => (
-                <span key={tag} className="text-slate-700 font-medium bg-slate-100 px-2 py-0.5 rounded">
+              {Array.from(new Set(article.tags)).map((tag, idx) => (
+                <span key={`${tag}-${idx}`} className="text-slate-700 font-medium bg-slate-100 px-2 py-0.5 rounded">
                   #{tag}
                 </span>
               ))}

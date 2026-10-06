@@ -227,7 +227,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newCategory, setNewCategory] = useState('Nepal');
   const [newSource, setNewSource] = useState('Yathartha Khabar Newsroom');
   const [newIsBreaking, setNewIsBreaking] = useState(false);
-  const [newImageUrl, setNewImageUrl] = useState('https://images.unsplash.com/photo-1544735716-392fe2489ffa?q=80&w=1200&auto=format&fit=crop');
+  const [newImageUrl, setNewImageUrl] = useState('');
 
   if (!isOpen) return null;
 

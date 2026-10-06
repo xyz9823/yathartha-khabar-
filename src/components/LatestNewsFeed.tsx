@@ -76,9 +76,9 @@ export const LatestNewsFeed: React.FC<LatestNewsFeedProps> = ({
         {/* Category Filter Buttons (Interactive Tab controls) */}
         {onFilterChange && (
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-4 mb-4 text-xs">
-            {filterCategories.map((cat) => (
+            {filterCategories.map((cat, idx) => (
               <button
-                key={cat}
+                key={`${cat}-${idx}`}
                 onClick={() => onFilterChange(cat)}
                 className={`px-3 py-1.5 rounded font-medium transition-colors whitespace-nowrap ${
                   activeFilter.toLowerCase() === cat.toLowerCase()

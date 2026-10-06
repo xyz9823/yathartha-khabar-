@@ -184,8 +184,13 @@ export interface SupabaseArticleRow {
   image_url: string;
   image_source: string;
   image_photographer?: string;
+  image_credit?: string;
   image_license: string;
   image_attribution: string;
+  original_image_url?: string;
+  image_subject?: string;
+  is_editorial_placeholder?: boolean;
+  context_expansion?: any;
   is_breaking: boolean;
   is_developing: boolean;
   status: string;
@@ -213,8 +218,13 @@ export function formatArticleFromRow(row: SupabaseArticleRow): any {
     image_url: row.image_url,
     image_source: row.image_source,
     image_photographer: row.image_photographer,
+    image_credit: row.image_credit || row.image_attribution,
     image_license: row.image_license,
     image_attribution: row.image_attribution,
+    original_image_url: row.original_image_url || row.image_url,
+    image_subject: row.image_subject,
+    is_editorial_placeholder: Boolean(row.is_editorial_placeholder),
+    context_expansion: row.context_expansion ? (typeof row.context_expansion === 'string' ? JSON.parse(row.context_expansion) : row.context_expansion) : undefined,
     is_breaking: Boolean(row.is_breaking),
     is_developing: Boolean(row.is_developing),
     status: row.status,
@@ -243,8 +253,13 @@ export function formatRowFromArticle(article: any): SupabaseArticleRow {
     image_url: article.image_url,
     image_source: article.image_source,
     image_photographer: article.image_photographer,
+    image_credit: article.image_credit || article.image_attribution,
     image_license: article.image_license,
     image_attribution: article.image_attribution,
+    original_image_url: article.original_image_url || article.image_url,
+    image_subject: article.image_subject,
+    is_editorial_placeholder: Boolean(article.is_editorial_placeholder),
+    context_expansion: article.context_expansion,
     is_breaking: Boolean(article.is_breaking),
     is_developing: Boolean(article.is_developing),
     status: article.status,

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Logo } from './Logo';
-import { CategoryType } from '../types/news';
 import { getCurrentNepalHeaderDate } from '../utils/dateUtils';
 import {
   Search,
@@ -9,7 +8,12 @@ import {
   X,
   Radio,
   Info,
-  ChevronDown
+  ChevronDown,
+  Sparkles,
+  Flame,
+  Globe,
+  Compass,
+  Bookmark
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -18,26 +22,27 @@ interface HeaderProps {
   onOpenSearch: () => void;
   onOpenAdmin: () => void;
   onOpenAbout: () => void;
+  onOpenBrief?: () => void;
   breakingCount?: number;
   liveCount?: number;
   customLogoUrl?: string;
 }
 
-const CATEGORIES: CategoryType[] = [
+const CATEGORIES: string[] = [
   'Latest',
   'Breaking News',
-  'Nepal',
+  'Trending',
+  'Nepal Live',
+  'World Map',
+  'Aviation',
   'Politics',
-  'Business',
   'Economy',
   'Technology',
   'Sports',
-  'Entertainment',
   'Tourism',
-  'Aviation',
-  'Education',
   'Health',
-  'World'
+  'World',
+  'My News'
 ];
 
 export const Header: React.FC<HeaderProps> = ({
@@ -46,6 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   onOpenAdmin,
   onOpenAbout,
+  onOpenBrief,
   breakingCount = 1,
   liveCount = 8,
   customLogoUrl
@@ -145,8 +151,19 @@ export const Header: React.FC<HeaderProps> = ({
           />
         </div>
 
-        {/* Right: Quick Fast News Search & Breaking Indicator */}
-        <div className="flex items-center gap-3">
+        {/* Right: Quick Fast News Search & Briefing & Breaking Indicator */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {onOpenBrief && (
+            <button
+              onClick={onOpenBrief}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 bg-amber-50 hover:bg-amber-100 border border-amber-300 rounded-lg transition-colors shadow-2xs"
+              title="Open Yathartha Brief 5-minute digest"
+            >
+              <Sparkles className="w-4 h-4 text-amber-600" />
+              <span className="hidden sm:inline">Daily Brief</span>
+            </button>
+          )}
+
           <button
             onClick={onOpenSearch}
             className="flex items-center gap-2 px-3.5 py-2 text-sm text-slate-600 bg-slate-100 hover:bg-slate-200/80 rounded-lg transition-colors border border-slate-200/80 group"
@@ -176,12 +193,12 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-8">
           <div className="flex items-center justify-between overflow-x-auto scrollbar-none py-1">
             <ul className="flex items-center gap-1 sm:gap-2 whitespace-nowrap text-sm font-semibold tracking-normal py-1">
-              {CATEGORIES.map((category) => {
+              {CATEGORIES.map((category, idx) => {
                 const isActive = activeCategory.toLowerCase() === category.toLowerCase();
                 const isBreaking = category === 'Breaking News';
 
                 return (
-                  <li key={category}>
+                  <li key={`${category}-${idx}`}>
                     <button
                       onClick={() => {
                         onSelectCategory(category);
@@ -242,9 +259,9 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-3 py-1 block">
                 News Categories
               </span>
-              {CATEGORIES.map((cat) => (
+              {CATEGORIES.map((cat, idx) => (
                 <button
-                  key={cat}
+                  key={`${cat}-${idx}`}
                   onClick={() => {
                     onSelectCategory(cat);
                     setMobileMenuOpen(false);

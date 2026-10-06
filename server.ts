@@ -6,6 +6,8 @@ import { GoogleGenAI } from '@google/genai';
 import { supabase, formatArticleFromRow, formatRowFromArticle, SUPABASE_SCHEMA_SQL } from './src/server/supabase.ts';
 import { CollectorEngine } from './src/server/collectorEngine.ts';
 import { selectRealEditorialImage, generateEditorialPlaceholderSvg, VERIFIED_NEPAL_IMAGE_ARCHIVE } from './src/server/editorialImageRegistry.ts';
+import { resolveArticleImage } from './src/server/imageProviderService.ts';
+import { expandArticleContext } from './src/server/contextExpansionService.ts';
 
 dotenv.config();
 
@@ -16,6 +18,35 @@ const app = express();
 const port = 3000;
 
 app.use(express.json());
+app.use(express.static(path.join(process.cwd(), 'public'), { maxAge: '1d' }));
+
+// Safe image proxy endpoint to bypass external referrer blocks and CORS
+app.get('/api/image-proxy', async (req: Request, res: Response) => {
+  const imageUrl = req.query.url as string;
+  if (!imageUrl || !imageUrl.startsWith('http')) {
+    return res.status(400).send('Invalid image URL');
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch(imageUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'YatharthaKhabarImageProxy/2.0 (+https://yatharthakhabar.com; news-verification)',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+      }
+    });
+    clearTimeout(timeout);
+    if (!response.ok) return res.status(404).send('Image fetch failed');
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.send(buffer);
+  } catch (err: any) {
+    res.status(502).send('Proxy error: ' + err.message);
+  }
+});
 
 // Server-Sent Events (SSE) active subscriber pool for real-time live news push
 const sseClients = new Set<Response>();
@@ -111,8 +142,13 @@ export interface Article {
   image_url: string;
   image_source: string;
   image_photographer?: string;
+  image_credit?: string;
   image_license: string;
   image_attribution: string;
+  original_image_url?: string;
+  image_subject?: string;
+  is_editorial_placeholder?: boolean;
+  context_expansion?: any;
   is_breaking: boolean;
   is_developing: boolean;
   status: 'published' | 'draft' | 'needs_verification' | 'rejected';
@@ -456,6 +492,19 @@ collectorEngine.bindDependencies(
 // Start collector on server boot
 collectorEngine.start(settings.pollingIntervalSeconds);
 
+// Pre-populate context expansion for initial baseline articles
+(async () => {
+  for (const art of articles) {
+    if (!art.context_expansion) {
+      try {
+        art.context_expansion = await expandArticleContext(art, aiClient || undefined);
+      } catch {
+        // quiet catch
+      }
+    }
+  }
+})();
+
 // API Endpoints
 
 // Real-Time Server-Sent Events stream for automated push updates (Section 9)
@@ -534,6 +583,50 @@ app.post('/api/images/select', (req: Request, res: Response) => {
   res.json({ success: true, data: result });
 });
 
+// POST /api/images/resolve (Multi-Provider Automatic Pipeline with Scoring)
+app.post('/api/images/resolve', async (req: Request, res: Response) => {
+  const { title, summary, category, sourceName, providedImageUrl } = req.body;
+  const activeUrls = new Set(articles.map(a => a.image_url).filter(Boolean));
+  const result = await resolveArticleImage({
+    title: title || '',
+    summary: summary || '',
+    category: category || 'Nepal',
+    sourceName: sourceName || 'Authorized Feed',
+    providedImageUrl
+  }, activeUrls, aiClient || undefined);
+
+  res.json({ success: true, data: result });
+});
+
+// POST /api/news/:id/expand (On-Demand Context Expansion & Entity Fact-Check)
+app.post('/api/news/:id/expand', async (req: Request, res: Response) => {
+  const article = articles.find(a => a.id === req.params.id || a.slug === req.params.id);
+  if (!article) {
+    return res.status(404).json({ success: false, message: 'Article not found' });
+  }
+
+  try {
+    const expansion = await expandArticleContext(article, aiClient || undefined);
+    article.context_expansion = expansion;
+    article.updated_at = new Date().toISOString();
+
+    if (supabaseTableExists) {
+      await supabase.from('articles').update(formatRowFromArticle(article)).eq('id', article.id);
+    }
+
+    broadcastRealtime({
+      type: 'UPDATE_STORY',
+      article,
+      storyId: article.id,
+      timestamp: article.updated_at
+    });
+
+    res.json({ success: true, data: article });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 0. GET /api/supabase/status
 app.get('/api/supabase/status', async (_req: Request, res: Response) => {
   let count = 0;
@@ -605,6 +698,11 @@ app.get('/api/news', async (req: Request, res: Response) => {
             a.primarySource.toLowerCase().includes(q)
           );
         }
+        for (const a of results) {
+          if (!a.context_expansion) {
+            a.context_expansion = await expandArticleContext(a, aiClient || undefined);
+          }
+        }
         return res.json({ success: true, count: results.length, data: results, source: 'supabase' });
       }
     } catch (err) {
@@ -645,6 +743,12 @@ app.get('/api/news', async (req: Request, res: Response) => {
     filtered = filtered.slice(0, parseInt(limit as string, 10));
   }
 
+  for (const a of filtered) {
+    if (!a.context_expansion) {
+      a.context_expansion = await expandArticleContext(a, aiClient || undefined);
+    }
+  }
+
   res.json({ success: true, count: filtered.length, data: filtered, source: 'memory' });
 });
 
@@ -676,6 +780,9 @@ app.get('/api/news/:id', async (req: Request, res: Response) => {
 
       if (!error && data) {
         const article = formatArticleFromRow(data);
+        if (!article.context_expansion) {
+          article.context_expansion = await expandArticleContext(article, aiClient || undefined);
+        }
         // increment view count asynchronously in Supabase
         supabase.from('articles').update({ view_count: (data.view_count || 1) + 1 }).eq('id', data.id);
         return res.json({ success: true, data: article, source: 'supabase' });
@@ -689,6 +796,9 @@ app.get('/api/news/:id', async (req: Request, res: Response) => {
   if (!article) {
     return res.status(404).json({ success: false, message: 'Article not found' });
   }
+  if (!article.context_expansion) {
+    article.context_expansion = await expandArticleContext(article, aiClient || undefined);
+  }
   article.view_count += 1;
   res.json({ success: true, data: article, source: 'memory' });
 });
@@ -696,6 +806,29 @@ app.get('/api/news/:id', async (req: Request, res: Response) => {
 // 4. POST /api/news (Create story)
 app.post('/api/news', async (req: Request, res: Response) => {
   const body = req.body;
+  let finalImageUrl = body.image_url;
+  let imageSource = body.image_source || 'Verified Source';
+  let imagePhotographer = body.image_photographer || '';
+  let imageLicense = body.image_license || 'Standard Editorial License';
+  let imageAttribution = body.image_attribution || 'Photo: Yathartha Khabar Media Archive';
+
+  // Automatically resolve unique real photo if image is missing or old default
+  if (!finalImageUrl || finalImageUrl.includes('photo-1544735716-392fe2489ffa')) {
+    const activeUrls = new Set(articles.map(a => a.image_url).filter(Boolean));
+    const resolved = await resolveArticleImage({
+      title: body.title || '',
+      summary: body.summary || '',
+      category: body.category || 'Nepal',
+      sourceName: body.primarySource || 'Editorial Newsroom'
+    }, activeUrls, aiClient || undefined);
+
+    finalImageUrl = resolved.url;
+    imageSource = resolved.source;
+    imagePhotographer = resolved.photographer;
+    imageLicense = resolved.license;
+    imageAttribution = resolved.attribution;
+  }
+
   const newArticle: Article = {
     id: `yk-${Date.now().toString(36)}`,
     title: body.title || 'Untitled Article',
@@ -708,11 +841,11 @@ app.post('/api/news', async (req: Request, res: Response) => {
     primarySource: body.primarySource || 'Editorial Newsroom',
     published_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-    image_url: body.image_url || 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?q=80&w=1200&auto=format&fit=crop',
-    image_source: body.image_source || 'Verified Source',
-    image_photographer: body.image_photographer || '',
-    image_license: body.image_license || 'Standard Editorial License',
-    image_attribution: body.image_attribution || 'Photo: Yathartha Khabar Media Archive',
+    image_url: finalImageUrl,
+    image_source: imageSource,
+    image_photographer: imagePhotographer,
+    image_license: imageLicense,
+    image_attribution: imageAttribution,
     is_breaking: Boolean(body.is_breaking),
     is_developing: Boolean(body.is_developing),
     status: body.status || 'published',
@@ -847,185 +980,18 @@ app.post('/api/news/merge', (req: Request, res: Response) => {
 
 // 8. POST /api/collector/simulate (Triggers automated news collector & duplicate detector)
 app.post('/api/collector/simulate', async (req: Request, res: Response) => {
-  const incomingSampleEvents = [
-    {
-      title: 'Department of Roads Finalizes Nagdhunga Tunnel Testing Schedule for Public Transport',
-      category: 'Nepal',
-      source: 'Ratopati',
-      sourceUrl: 'https://ratopati.com/story/nagdhunga-tunnel',
-      rawText: 'Department of Roads has announced that safety vehicle trials in the main tube of Nagdhunga tunnel will occur next week. Ventilation and jet fan calibration are finalized.',
-      image: 'https://images.unsplash.com/photo-1541888946425-d0fbb186c5f7?q=80&w=1200&auto=format&fit=crop'
-    },
-    {
-      title: 'Tribhuvan Airport Resurfacing: International Airlines Reconfirm Operational Schedule',
-      category: 'Aviation',
-      source: 'Onlinekhabar',
-      sourceUrl: 'https://onlinekhabar.com/story/tia-night-flight',
-      rawText: 'Following CAAN night maintenance notice at TIA runway, Middle Eastern and South Asian carriers have aligned flight windows.',
-      image: 'https://images.unsplash.com/photo-1542296332-2e4473faf563?q=80&w=1200&auto=format&fit=crop'
-    },
-    {
-      title: 'Nepal Rastra Bank Issues Directive on Contactless Retail Digital QR Transactions',
-      category: 'Business',
-      source: 'Setopati',
-      sourceUrl: 'https://setopati.com/story/nrb-qr-directive',
-      rawText: 'Nepal Rastra Bank released new interoperability guidelines for mobile banking payment gateways to eliminate transaction friction across merchant networks.',
-      image: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?q=80&w=1200&auto=format&fit=crop'
-    }
-  ];
-
-  // Pick one incoming item or request payload
-  const incoming = req.body.title ? req.body : incomingSampleEvents[Math.floor(Math.random() * incomingSampleEvents.length)];
-
-  // DUPLICATE & MULTI-SOURCE DETECTION ALGORITHM
-  // Check against existing articles for matching key entities
-  const incomingWords = (incoming.title + ' ' + (incoming.rawText || '')).toLowerCase().split(/\s+/).filter((w: string) => w.length > 4);
-  let duplicateCandidate: Article | null = null;
-  let highestOverlap = 0;
-
-  for (const existing of articles) {
-    const existingWords = (existing.title + ' ' + existing.summary).toLowerCase().split(/\s+/).filter((w: string) => w.length > 4);
-    const common = incomingWords.filter((w: string) => existingWords.includes(w));
-    const overlapRatio = common.length / Math.min(incomingWords.length, existingWords.length);
-
-    if (overlapRatio > 0.35 && overlapRatio > highestOverlap) {
-      highestOverlap = overlapRatio;
-      duplicateCandidate = existing;
-    }
-  }
-
-  // If duplicate / related event detected, perform multi-source merge or flag
-  if (duplicateCandidate && highestOverlap > 0.35) {
-    const newSource: StorySource = {
-      id: `s-${Date.now()}`,
-      name: incoming.source,
-      url: incoming.sourceUrl || '#',
-      reportedAt: new Date().toISOString(),
-      snippet: incoming.rawText || incoming.title
-    };
-
-    if (!duplicateCandidate.sources.some(s => s.name.toLowerCase() === incoming.source.toLowerCase())) {
-      duplicateCandidate.sources.push(newSource);
-      duplicateCandidate.is_developing = true;
-      duplicateCandidate.updated_at = new Date().toISOString();
-      duplicateCandidate.timeline.unshift({
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        source: incoming.source,
-        update: `Corroborating report received: "${incoming.title}"`
-      });
-      duplicateCandidate.ai_summary_note = `Merged story. Verified across ${duplicateCandidate.sources.length} sources (${duplicateCandidate.sources.map(s => s.name).join(', ')}).`;
-    }
-
-    return res.json({
+  try {
+    const isBreaking = Boolean(req.body.is_breaking || req.body.isBreaking);
+    const story = await collectorEngine.simulateIncomingStory(isBreaking, settings.publishingMode);
+    res.json({
       success: true,
-      action: 'merged_into_existing',
-      matchedArticle: duplicateCandidate,
-      overlapScore: Math.round(highestOverlap * 100),
-      message: `Detected corroborating report from ${incoming.source}. Merged into developing story "${duplicateCandidate.title}".`
+      action: 'collected_real_story',
+      data: story,
+      message: `Story collected and processed with verified image pipeline.`
     });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
-
-  // Novel Story: Process with Gemini AI if configured or intelligent rule-based synthesizer
-  let generatedHeadline = incoming.title;
-  let generatedSummary = incoming.rawText || incoming.title;
-  let aiConfidence = 92;
-
-  if (aiClient && process.env.GEMINI_API_KEY) {
-    try {
-      const prompt = `You are the lead editor for Yathartha Khabar (यथार्थ खबर), Nepal's premier digital newsroom.
-Create a factual, objective, concise news summary from this raw report from ${incoming.source}:
-Headline: ${incoming.title}
-Text: ${incoming.rawText}
-
-Return valid JSON with:
-{
-  "headline": "concise, neutral, highly readable title (under 90 chars)",
-  "summary": "1-2 sentence objective summary",
-  "category": "one of: Nepal, Politics, Business, Economy, Technology, Sports, Entertainment, Tourism, Aviation, Education, Health, World",
-  "tags": ["3 to 5 tags"],
-  "isHighRisk": false
-}`;
-
-      const aiResponse = await aiClient.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json'
-        }
-      });
-
-      const parsed = JSON.parse(aiResponse.text || '{}');
-      if (parsed.headline) generatedHeadline = parsed.headline;
-      if (parsed.summary) generatedSummary = parsed.summary;
-      if (parsed.category) incoming.category = parsed.category;
-    } catch (err) {
-      console.warn('Gemini summarization fallback to standard rules:', err);
-    }
-  }
-
-  // Determine publishing state according to Publishing Mode
-  let initialStatus: 'published' | 'needs_verification' | 'draft' = 'published';
-  if (settings.publishingMode === 'MANUAL') {
-    initialStatus = 'needs_verification';
-  } else if (settings.publishingMode === 'ASSISTED') {
-    initialStatus = 'needs_verification';
-  } else if (settings.publishingMode === 'AUTOMATIC') {
-    // Check if sensitive topic
-    const sensitive = /death|killed|casualty|bribe|corruption|court verdict|rape|murder/i.test(incoming.title);
-    initialStatus = sensitive ? 'needs_verification' : 'published';
-  }
-
-  const novelArticle: Article = {
-    id: `yk-${Date.now().toString(36)}`,
-    title: generatedHeadline,
-    slug: generatedHeadline.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-    summary: generatedSummary,
-    content: `${incoming.rawText || generatedSummary}\n\nKATHMANDU — Yathartha Khabar news collector received initial reports from authorized feeds. Operational details are corroborated through official bulletins.\n\nMore verified updates will follow as reports develop.`,
-    category: incoming.category || 'Nepal',
-    tags: [incoming.category || 'Nepal', 'Yathartha Khabar', incoming.source],
-    sources: [
-      {
-        id: `s-${Date.now()}`,
-        name: incoming.source,
-        url: incoming.sourceUrl || '#',
-        reportedAt: new Date().toISOString(),
-        isPrimary: true,
-        snippet: incoming.rawText || incoming.title
-      }
-    ],
-    primarySource: incoming.source,
-    published_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    image_url: incoming.image || 'https://images.unsplash.com/photo-1544735716-392fe2489ffa?q=80&w=1200&auto=format&fit=crop',
-    image_source: 'Authorized Feed Wire',
-    image_photographer: `${incoming.source} Pool`,
-    image_license: 'Permitted Source Attribution',
-    image_attribution: `Photo via ${incoming.source} / Yathartha Khabar Archive`,
-    is_breaking: Boolean(req.body.is_breaking),
-    is_developing: false,
-    status: initialStatus,
-    verification_status: 'initial_report',
-    ai_confidence: aiConfidence,
-    ai_summary_note: 'AI-assisted summary based on initial authorized feed report.',
-    created_at: new Date().toISOString(),
-    view_count: 1,
-    timeline: [
-      {
-        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-        source: incoming.source,
-        update: 'Story detected and categorized.'
-      }
-    ]
-  };
-
-  articles.unshift(novelArticle);
-
-  res.status(201).json({
-    success: true,
-    action: 'created_novel_article',
-    data: novelArticle,
-    message: `New story collected from ${incoming.source} and processed in ${settings.publishingMode} mode.`
-  });
 });
 
 // 9. GET & PUT /api/settings
